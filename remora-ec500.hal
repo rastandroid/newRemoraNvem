@@ -1,6 +1,6 @@
 # Basic HAL config file for NVEM controller board running Remora firmware
 # Configured for 3 joints (A, Y, Z axes) with home and limit switches
-# correcting
+# correcting 19/6/24
 
 
 loadrt [KINS]KINEMATICS
@@ -9,21 +9,38 @@ loadrt [EMCMOT]EMCMOT base_period_nsec=[EMCMOT]BASE_PERIOD servo_period_nsec=[EM
 # load the Remora real-time component
 
 	loadrt remora-eth-3.0 PRU_base_freq=500000
-
-
-loadrt scale names=spindle_speed_scale
+	
+	loadrt estop_latch names=estop_latch
+	addf estop_latch servo-thread
+	
+	loadrt scale names=spindle_speed_scale
     addf spindle_speed_scale servo-thread
-    setp spindle_speed_scale.gain 0.004167 # volts per RPM, calculated over full scale. [max output voltage]/[Max spindle speed] * 10 Example: 0-10V, 24000 rpm: (10/24000) * 10 = 0.004167
+    setp spindle_speed_scale.gain 0.004167 
+# volts per RPM, calculated over full scale. [max output voltage]/[Max spindle speed] * 10 Example: 0-10V, 24000 rpm: (10/24000) * 10 = 0.004167
     net spindle-scale-in spindle.0.speed-out => spindle_speed_scale.in
     net spindle-speed-scaled spindle_speed_scale.out => remora.SP.0
+	
 
+ 
+# estop loopback, SPI comms enable and feedback
 
-# estop and SPI comms enable and feedback
+    net user-enable-out 		iocontrol.0.user-enable-out 		=> remora.enable
+    net user-request-enable 	iocontrol.0.user-request-enable 	=> remora.reset estop_latch.reset
+   # net motion-enable				motion.enable			=> 		remora.output.00						
+	net j0enable => remora.output.00		
+    
+#estop_latch returns 'ok' when fault-in is false, ok-in is true, and reset changes from false to true. 
 
-	net user-enable-out		<= iocontrol.0.user-enable-out		=> remora.enable
-	net user-request-enable <= iocontrol.0.user-request-enable	=> remora.reset
-	net remora-status 		<= remora.status 				=> iocontrol.0.emc-enable-in
-
+    net estop-fault_in 			remora.input.04 					=> estop_latch.fault-in
+    net remora-status 			remora.status 						=> estop_latch.ok-in
+    net estop-status 			estop_latch.ok-out 					=> iocontrol.0.emc-enable-in
+	
+#spindle	
+	
+	net spindle-cw 	<=	 spindle.0.forward	=>	remora.output.01	
+	#net spindle-enable 	spindle.0.on		=>	remora.output.00
+	#net spindle-on => 
+	#net spindle-ccw => remora.output.01
 
 # add the remora and motion functions to threads
 
@@ -32,7 +49,6 @@ loadrt scale names=spindle_speed_scale
 	addf motion-controller 		servo-thread
 	addf remora.update-freq 	servo-thread
 	addf remora.write 			servo-thread
-
 
 
 # joint 0 setup (X axis)
@@ -67,19 +83,39 @@ loadrt scale names=spindle_speed_scale
 	
 # end-stops
 
-# LPT lcncpins
-	#net both-z          <= parport.0.pin-11-in
-	#net both-x          <= parport.0.pin-12-in-not
-	#net both-y          <= parport.0.pin-13-in-not
 
 
 #pin IN03
-	net X-max       remora.input.06         =>  joint.0.pos-lim-sw-in
+	#net X-max       remora.input.06        =>  joint.0.pos-lim-sw-in
+	net both-x       remora.input.06        =>  joint.0.home-sw-in joint.0.pos-lim-sw-in
+	
+	
 #pin IN04
-	net X-min       remora.input.07         =>  joint.0.neg-lim-sw-in
+	#net X-min       remora.input.07         =>  joint.0.neg-lim-sw-in
+	
+	
 #pin IN05
-	net Y-max       remora.input.08         =>  joint.1.pos-lim-sw-in
+	#net Y-max       remora.input.08         =>  joint.1.pos-lim-sw-in
+	net both-y       remora.input.08        =>  joint.1.home-sw-in joint.1.pos-lim-sw-in
+	
+	
 #pin IN06	
-	net Y-min       remora.input.09         =>  joint.1.neg-lim-sw-in
+	#net Y-min       remora.input.09         =>  joint.1.neg-lim-sw-in
+	
 #pin IN07
-	net both-z       remora.input.10         =>  joint.2.neg-lim-sw-in
+	net both-z       remora.input.10         =>  joint.2.pos-lim-sw-in
+	
+ loadusr -W hal_manualtoolchange
+net tool-change iocontrol.0.tool-change => hal_manualtoolchange.change
+net tool-changed iocontrol.0.tool-changed <= hal_manualtoolchange.changed
+net tool-number iocontrol.0.tool-prep-number => hal_manualtoolchange.number
+net tool-prepare-loopback iocontrol.0.tool-prepare => iocontrol.0.tool-prepared
+
+#spindle speed display
+
+net spindle-cmd-rpm     <= spindle.0.speed-in
+net spindle-cmd-rpm-abs <= spindle.0.speed-out-abs
+net spindle-cmd-rps     <= spindle.0.speed-out-rps
+net spindle-cmd-rps-abs <= spindle.0.speed-out-rps-abs
+net spindle-at-speed    => spindle.0.at-speed
+net spindle-cw <= spindle.0.forward
